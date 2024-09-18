@@ -22,6 +22,8 @@
 #include "tf2_eigen/tf2_eigen.h"
 #include <mbf_costmap_core/costmap_controller.h>
 #include <visualization_msgs/Marker.h>
+#include <mower_msgs/Status.h>
+#include "mower_logic/VelocityLimit.h"
 
 namespace ftc_local_planner
 {
@@ -58,6 +60,8 @@ namespace ftc_local_planner
         ros::Publisher progress_pub;
         ros::Publisher obstacle_marker_pub;
 
+        ros::Subscriber status_sub;
+
         FTCPlannerConfig config;
 
         Eigen::Affine3d current_control_point;
@@ -69,9 +73,14 @@ namespace ftc_local_planner
         double last_lon_error = 0.0;
         double last_lat_error = 0.0;
         double last_angle_error = 0.0;
+        double last_vlim_error = 0.0;
         double i_lon_error = 0.0;
         double i_lat_error = 0.0;
         double i_angle_error = 0.0;
+        double i_vlim_error = 0.0;
+
+        double lookahead_speed = 0.0;
+        
         ros::Time last_time;
 
         /**
@@ -96,6 +105,7 @@ namespace ftc_local_planner
         bool oscillation_warning_ = false;
 
         double distanceLookahead();
+        double velocityLookahead();
         PlannerState update_planner_state();
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
