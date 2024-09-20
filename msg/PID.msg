@@ -23,3 +23,5 @@ float32 ang_err
 # speeds
 float32 ang_speed
 float32 lin_speed
+float32 lookahead_speed
+float32 velocity_limit
