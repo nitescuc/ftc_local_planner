@@ -23,7 +23,7 @@
 #include <mbf_costmap_core/costmap_controller.h>
 #include <visualization_msgs/Marker.h>
 #include <mower_msgs/Status.h>
-#include "mower_logic/VelocityLimit.h"
+//#include "mower_logic/VelocityLimit.h"
 
 namespace ftc_local_planner
 {

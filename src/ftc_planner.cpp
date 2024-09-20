@@ -15,17 +15,17 @@ namespace ftc_local_planner
     double velocity_limit = 1.0;
     ros::Time vel_limit_time(0.0);
 
-    void velocityLimitReceived(const mower_logic::VelocityLimit::ConstPtr &msg) {    
+    // void velocityLimitReceived(const mower_logic::VelocityLimit::ConstPtr &msg) {    
 
-        double loc_velocity_limit = msg->velocity_limit;
-        if(loc_velocity_limit > 1.0) 
-            loc_velocity_limit = 1.0;
-        else if(loc_velocity_limit < 0.05) 
-            loc_velocity_limit = 0.05;
+    //     double loc_velocity_limit = msg->velocity_limit;
+    //     if(loc_velocity_limit > 1.0) 
+    //         loc_velocity_limit = 1.0;
+    //     else if(loc_velocity_limit < 0.05) 
+    //         loc_velocity_limit = 0.05;
 
-        velocity_limit = loc_velocity_limit;
-        vel_limit_time = ros::Time::now();
-    }
+    //     velocity_limit = loc_velocity_limit;
+    //     vel_limit_time = ros::Time::now();
+    // }
 
     FTCPlanner::FTCPlanner()
     {
@@ -53,7 +53,7 @@ namespace ftc_local_planner
         reconfig_server->setCallback(cb);
 
         ros::NodeHandle n;
-        status_sub = n.subscribe("/mower/velocity_limit", 0, velocityLimitReceived, ros::TransportHints().tcpNoDelay(true));
+        //status_sub = n.subscribe("/mower/velocity_limit", 0, velocityLimitReceived, ros::TransportHints().tcpNoDelay(true));
 
         current_state = PRE_ROTATE;
 
