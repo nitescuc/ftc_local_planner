@@ -463,14 +463,31 @@ namespace ftc_local_planner
         double d_lat = (lat_error - last_lat_error) / dt;
         double d_lon = (lon_error - last_lon_error) / dt;
         double d_angle = (angle_error - last_angle_error) / dt;
-
+        // TODO: add kd_lat_max, etc
+        if (d_lat > config.ki_lat_max)
+        {
+            d_lat = config.ki_lat_max;
+        }
+        else if (d_lat < -config.ki_lat_max)
+        {
+            d_lat = -config.ki_lat_max;
+        }
+        if (d_angle > config.ki_ang_max)
+        {
+            d_angle = config.ki_ang_max;
+        }
+        else if (d_angle < -config.ki_ang_max)
+        {
+            d_angle = -config.ki_ang_max;
+        }
+ 
         last_lat_error = lat_error;
         last_lon_error = lon_error;
         last_angle_error = angle_error;
 
         // allow linear movement only if in following state
 
-        if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH))
+        if ((current_state == FOLLOWING)/* || (current_state == WAITING_FOR_GOAL_APPROACH)*/)
         {
             double lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon;
             if (lin_speed < 0 && config.forward_only)
@@ -503,7 +520,19 @@ namespace ftc_local_planner
         if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH))
         {
 
-            double ang_speed = angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang +
+            double ang_gain_factor = 1.0;               
+            if(config.lateral_priority_distance > 0.01) 
+            {
+                if(abs(lat_error) >= config.lateral_priority_distance)
+                    ang_gain_factor = 0;
+                else
+                    ang_gain_factor = (config.lateral_priority_distance - abs(lat_error))/config.lateral_priority_distance;
+
+                if(ang_gain_factor < 0.1)
+                    ang_gain_factor = 0.1;
+            }
+
+            double ang_speed = ang_gain_factor * (angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang) +
                                lat_error * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat;
 
             if (ang_speed > config.max_cmd_vel_ang)
@@ -535,9 +564,12 @@ namespace ftc_local_planner
             bool is_oscillating = checkOscillation(cmd_vel);
             if (is_oscillating)
             {
-                ang_speed = config.max_cmd_vel_ang;
+                ang_speed = 0.0; //config.max_cmd_vel_ang;
                 cmd_vel.twist.angular.z = ang_speed;
             }
+        }
+        if (abs(cmd_vel.twist.angular.z) > 0.15) {
+            cmd_vel.twist.linear.x /= 2;
         }
 
         if (config.debug_pid)
