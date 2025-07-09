@@ -99,6 +99,7 @@ namespace ftc_local_planner
         PlannerState update_planner_state();
         void update_control_point(double dt);
         void calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel);
+        bool is_high_error();
 
         /**
          * @brief check for obstacles in path as well as collision at actual pose

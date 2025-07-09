@@ -170,6 +170,17 @@ namespace ftc_local_planner
         // We're not crashed and not finished.
         // First, we update the control point if needed. This is needed since we need the local_control_point to calculate the next state.
         update_control_point(dt);
+        // if collision truncate the plan if we're near the end of the path
+        // bool collision = checkCollision(config.obstacle_lookahead);
+        // int positions_to_truncate = 2;
+        // if (collision && global_plan.size() > 2 + positions_to_truncate)
+        // {
+        //     if (current_index >= global_plan.size() - 2 - positions_to_truncate)
+        //     {
+        //         ROS_WARN_STREAM("FTCLocalPlannerROS: Potential collision detected, truncating plan.");
+        //         global_plan.resize(global_plan.size() - positions_to_truncate);
+        //     }
+        // }
         // Then, update the planner state.
         auto new_planner_state = update_planner_state();
         if (new_planner_state != current_state)
@@ -179,16 +190,17 @@ namespace ftc_local_planner
             current_state = new_planner_state;
         }
 
-        if (checkCollision(config.obstacle_lookahead))
-        {
-            cmd_vel.twist.linear.x = 0;
-            cmd_vel.twist.angular.z = 0;
-            is_crashed = true;
-            return RET_BLOCKED;
-        }
-
         // Finally, we calculate the velocity commands.
         calculate_velocity_commands(dt, cmd_vel);
+        // check collision and slow down if needed
+        // if (collision)
+        // {
+        //     if (cmd_vel.twist.linear.x > config.max_cmd_vel_speed_collision)
+        //     {
+        //         ROS_WARN_STREAM_THROTTLE(1, "FTCLocalPlannerROS: Potential collision detected, setting linear velocity to very slow." << cmd_vel.twist.linear.x << "->" << config.max_cmd_vel_speed_collision);
+        //         cmd_vel.twist.linear.x = config.max_cmd_vel_speed_collision;
+        //     }
+        // }
 
         if (is_crashed)
         {
@@ -291,6 +303,16 @@ namespace ftc_local_planner
         return current_state;
     }
 
+    bool FTCPlanner::is_high_error()
+    {
+        if (abs(i_lat_error) > config.max_lat_error_fast ||
+            abs(i_lon_error) > config.max_lon_error_fast)
+        {
+            return true;
+        }
+        return false;
+    }
+
     void FTCPlanner::update_control_point(double dt)
     {
 
@@ -306,7 +328,16 @@ namespace ftc_local_planner
             double speed;
             if (straight_dist >= config.speed_fast_threshold)
             {
-                speed = config.speed_fast;
+                if (is_high_error())
+                {
+                    speed = config.speed_slow;
+                    ROS_WARN_STREAM_THROTTLE(10, "FTCLocalPlannerROS: High error detected. Slowing down to slow speed." << 
+                                              " lat_error: " << i_lat_error << ", lon_error: " << i_lon_error);
+                }
+                else
+                {
+                    speed = config.speed_fast;
+                }
             }
             else
             {
@@ -487,7 +518,7 @@ namespace ftc_local_planner
 
         // allow linear movement only if in following state
 
-        if ((current_state == FOLLOWING)/* || (current_state == WAITING_FOR_GOAL_APPROACH)*/)
+        if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH))
         {
             double lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon;
             if (lin_speed < 0 && config.forward_only)
@@ -568,9 +599,10 @@ namespace ftc_local_planner
                 cmd_vel.twist.angular.z = ang_speed;
             }
         }
-        if (abs(cmd_vel.twist.angular.z) > 0.15) {
-            cmd_vel.twist.linear.x /= 2;
-        }
+        // keep the speed slow if we're turning
+        // if (abs(cmd_vel.twist.angular.z) > 0.15 && abs(cmd_vel.twist.linear.x) > config.max_cmd_vel_speed_turning){
+        //     cmd_vel.twist.linear.x = config.max_cmd_vel_speed_turning;
+        // }
 
         if (config.debug_pid)
         {
@@ -625,61 +657,26 @@ namespace ftc_local_planner
         }
         // maximal costs
         unsigned char previous_cost = 255;
-        // ensure look ahead not out of plan
-        if (global_plan.size() < max_points)
-        {
-            max_points = global_plan.size();
-        }
 
         // calculate cost of footprint at robots actual pose
         if (config.obstacle_footprint)
         {
-        costmap->getOrientedFootprint(footprint);
-        for (int i = 0; i < footprint.size(); i++)
-        {
-            // check cost of each point of footprint
-            if (costmap_map_->worldToMap(footprint[i].x, footprint[i].y, x, y))
+            costmap->getOrientedFootprint(footprint);
+            for (int i = 0; i < footprint.size(); i++)
             {
-                unsigned char costs = costmap_map_->getCost(x, y);
-                if (costs >= costmap_2d::LETHAL_OBSTACLE)
+                // check cost of each point of footprint
+                if (costmap_map_->worldToMap(footprint[i].x, footprint[i].y, x, y))
                 {
-                    ROS_WARN("FTCLocalPlannerROS: Possible collision of footprint at actual pose. Stop local planner.");
-                    return true;
-                }
-            }
-        }
-        }
-
-        for (int i = 0; i < max_points; i++)
-        {
-            geometry_msgs::PoseStamped x_pose;
-            int index = current_index + i;
-            if (index > global_plan.size())
-            {
-                index = global_plan.size();
-            }
-            x_pose = global_plan[index];
-
-            if (costmap_map_->worldToMap(x_pose.pose.position.x, x_pose.pose.position.y, x, y))
-            {
-                unsigned char costs = costmap_map_->getCost(x, y);
-                if (config.debug_obstacle)
-                {
-                    debugObstacle(obstacle_marker, x, y, costs, max_points);
-                }
-                // Near at obstacel
-                if (costs > 0)
-                {
-                    // Possible collision
-                    if (costs > 127 && costs > previous_cost)
+                    unsigned char costs = costmap_map_->getCost(x, y);
+                    if (costs >= costmap_2d::LETHAL_OBSTACLE)
                     {
-                        ROS_WARN("FTCLocalPlannerROS: Possible collision. Stop local planner.");
+                        ROS_WARN_STREAM_THROTTLE(10, "FTCLocalPlannerROS: Possible collision of footprint at actual pose.");
                         return true;
                     }
                 }
-                previous_cost = costs;
             }
         }
+
         return false;
     }
 
