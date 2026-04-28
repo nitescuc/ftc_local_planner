@@ -155,6 +155,7 @@ namespace ftc_local_planner
 
         if (is_crashed)
         {
+            ROS_INFO_STREAM_THROTTLE(1, "FTCLocalPlannerROS: Robot is in crashed state, waiting for new plan.");
             cmd_vel.twist.linear.x = 0;
             cmd_vel.twist.angular.z = 0;
             return RET_COLLISION;
@@ -444,12 +445,21 @@ namespace ftc_local_planner
             viz.pose = tf2::toMsg(current_control_point);
             global_point_pub.publish(viz);
         }
-        auto map_to_base = tf_buffer->lookupTransform("base_link", "map", ros::Time(), ros::Duration(1.0));
-        tf2::doTransform(current_control_point, local_control_point, map_to_base);
+        
+        try
+        {
+            auto map_to_base = tf_buffer->lookupTransform("base_link", "map", ros::Time(), ros::Duration(1.0));
+            tf2::doTransform(current_control_point, local_control_point, map_to_base);
 
-        lat_error = local_control_point.translation().y();
-        lon_error = local_control_point.translation().x();
-        angle_error = local_control_point.rotation().eulerAngles(0, 1, 2).z();
+            lat_error = local_control_point.translation().y();
+            lon_error = local_control_point.translation().x();
+            angle_error = local_control_point.rotation().eulerAngles(0, 1, 2).z();
+        }
+        catch (tf2::TransformException &ex)
+        {
+            ROS_WARN_STREAM_THROTTLE(1.0, "FTCLocalPlannerROS: TF lookup failed in update_control_point: " << ex.what());
+            // Keep using previous errors if transform fails temporarily
+        }
     }
 
     void FTCPlanner::calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel)
