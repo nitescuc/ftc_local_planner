@@ -3,6 +3,7 @@
 
 #include <pluginlib/class_list_macros.h>
 #include "mbf_msgs/ExePathAction.h"
+#include <cmath>
 
 PLUGINLIB_EXPORT_CLASS(ftc_local_planner::FTCPlanner, mbf_costmap_core::CostmapController)
 
@@ -84,6 +85,9 @@ namespace ftc_local_planner
         lat_error = 0.0;
         lon_error = 0.0;
         angle_error = 0.0;
+        last_lon_error = 0.0;
+        last_lat_error = 0.0;
+        last_angle_error = 0.0;
         i_lon_error = 0.0;
         i_lat_error = 0.0;
         i_angle_error = 0.0;
@@ -453,7 +457,8 @@ namespace ftc_local_planner
 
             lat_error = local_control_point.translation().y();
             lon_error = local_control_point.translation().x();
-            angle_error = local_control_point.rotation().eulerAngles(0, 1, 2).z();
+            const double raw_angle_error = local_control_point.rotation().eulerAngles(0, 1, 2).z();
+            angle_error = std::atan2(std::sin(raw_angle_error), std::cos(raw_angle_error));
         }
         catch (tf2::TransformException &ex)
         {
@@ -464,6 +469,13 @@ namespace ftc_local_planner
 
     void FTCPlanner::calculate_velocity_commands(double dt, geometry_msgs::TwistStamped &cmd_vel)
     {
+        if (dt <= 1e-6)
+        {
+            dt = 1e-6;
+        }
+
+        const bool is_tracking_state = (current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH);
+
         // check, if we're completely done
         if (current_state == FINISHED || is_crashed)
         {
@@ -472,8 +484,17 @@ namespace ftc_local_planner
             return;
         }
 
-        i_lon_error += lon_error * dt;
-        i_lat_error += lat_error * dt;
+        if (is_tracking_state)
+        {
+            i_lon_error += lon_error * dt;
+            i_lat_error += lat_error * dt;
+        }
+        else
+        {
+            // Prevent pre/post-rotate phases from winding up linear/lateral integrators.
+            i_lon_error = 0.0;
+            i_lat_error = 0.0;
+        }
         i_angle_error += angle_error * dt;
 
         if (i_lon_error > config.ki_lon_max)
@@ -503,23 +524,31 @@ namespace ftc_local_planner
 
         double d_lat = (lat_error - last_lat_error) / dt;
         double d_lon = (lon_error - last_lon_error) / dt;
-        double d_angle = (angle_error - last_angle_error) / dt;
-        // TODO: add kd_lat_max, etc
-        if (d_lat > config.ki_lat_max)
+        const double angle_delta = std::atan2(std::sin(angle_error - last_angle_error), std::cos(angle_error - last_angle_error));
+        double d_angle = angle_delta / dt;
+        if (d_lon > config.kd_lon_max)
         {
-            d_lat = config.ki_lat_max;
+            d_lon = config.kd_lon_max;
         }
-        else if (d_lat < -config.ki_lat_max)
+        else if (d_lon < -config.kd_lon_max)
         {
-            d_lat = -config.ki_lat_max;
+            d_lon = -config.kd_lon_max;
         }
-        if (d_angle > config.ki_ang_max)
+        if (d_lat > config.kd_lat_max)
         {
-            d_angle = config.ki_ang_max;
+            d_lat = config.kd_lat_max;
         }
-        else if (d_angle < -config.ki_ang_max)
+        else if (d_lat < -config.kd_lat_max)
         {
-            d_angle = -config.ki_ang_max;
+            d_lat = -config.kd_lat_max;
+        }
+        if (d_angle > config.kd_ang_max)
+        {
+            d_angle = config.kd_ang_max;
+        }
+        else if (d_angle < -config.kd_ang_max)
+        {
+            d_angle = -config.kd_ang_max;
         }
  
         last_lat_error = lat_error;
@@ -528,9 +557,10 @@ namespace ftc_local_planner
 
         // allow linear movement only if in following state
 
-        if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH))
+        if (is_tracking_state)
         {
             double lin_speed = lon_error * config.kp_lon + i_lon_error * config.ki_lon + d_lon * config.kd_lon;
+            bool driving_backwards = false;
             if (lin_speed < 0 && config.forward_only)
             {
                 lin_speed = 0;
@@ -548,33 +578,26 @@ namespace ftc_local_planner
 
                 if (lin_speed < 0)
                 {
-                    lat_error *= -1.0;
+                    driving_backwards = true;
                 }
             }
             cmd_vel.twist.linear.x = lin_speed;
-        }
-        else
-        {
-            cmd_vel.twist.linear.x = 0.0;
-        }
-
-        if ((current_state == FOLLOWING) || (current_state == WAITING_FOR_GOAL_APPROACH))
-        {
+            const double lat_error_for_control = driving_backwards ? -lat_error : lat_error;
 
             double ang_gain_factor = 1.0;               
-            if(config.lateral_priority_distance > 0.01) 
+            if(config.lateral_priority_distance > 0.01)
             {
-                if(abs(lat_error) >= config.lateral_priority_distance)
+                if(abs(lat_error_for_control) >= config.lateral_priority_distance)
                     ang_gain_factor = 0;
                 else
-                    ang_gain_factor = (config.lateral_priority_distance - abs(lat_error))/config.lateral_priority_distance;
+                    ang_gain_factor = (config.lateral_priority_distance - abs(lat_error_for_control))/config.lateral_priority_distance;
 
                 if(ang_gain_factor < 0.1)
                     ang_gain_factor = 0.1;
             }
 
             double ang_speed = ang_gain_factor * (angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang) +
-                               lat_error * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat;
+                               lat_error_for_control * config.kp_lat + i_lat_error * config.ki_lat + d_lat * config.kd_lat;
 
             if (ang_speed > config.max_cmd_vel_ang)
             {
@@ -589,6 +612,8 @@ namespace ftc_local_planner
         }
         else
         {
+            cmd_vel.twist.linear.x = 0.0;
+
             double ang_speed = angle_error * config.kp_ang + i_angle_error * config.ki_ang + d_angle * config.kd_ang;
             if (ang_speed > config.max_cmd_vel_ang)
             {

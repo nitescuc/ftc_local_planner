@@ -65,7 +65,9 @@ namespace ftc_local_planner
         /**
          * PID State
          */
-        double lat_error, lon_error, angle_error = 0.0;
+        double lat_error = 0.0;
+        double lon_error = 0.0;
+        double angle_error = 0.0;
         double last_lon_error = 0.0;
         double last_lat_error = 0.0;
         double last_angle_error = 0.0;
